@@ -22,7 +22,8 @@ jobs:
       - name: Build APK
         uses: ArtemSBulgakov/buildozer-action@v1
         with:
-          command: buildozer android debug
+          # Changed command to include '-v' for verbose output
+          command: buildozer android debug -v
           workdir: . # Ensure your buildozer.spec and main.py are in the root or correctly referenced
           buildozer_version: stable
 
