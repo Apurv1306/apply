@@ -1,4 +1,4 @@
-cat > app/main.py <<'EOF'
+
 import os, threading
 from pathlib import Path
 from kivy.app import App
@@ -91,4 +91,4 @@ class FaceAppUI(App):
 
 if __name__ == '__main__':
     FaceAppUI().run()
-EOF
+
