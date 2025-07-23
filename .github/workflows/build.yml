@@ -12,6 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
+      # ✅ Clean build environment
+      - name: Clean build cache
+        run: |
+          rm -rf .buildozer
+          rm -rf app/bin
 
       - name: Build APK
         uses: ArtemSBulgakov/buildozer-action@v1
