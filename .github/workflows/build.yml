@@ -12,22 +12,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       # ✅ Clean build environment
       - name: Clean build cache
         run: |
           rm -rf .buildozer
-          rm -rf app/bin
+          rm -rf app/bin # This might be redundant if buildozer doesn't use app/bin for output
 
       - name: Build APK
         uses: ArtemSBulgakov/buildozer-action@v1
         with:
           command: buildozer android debug
-          workdir: .
+          workdir: . # Ensure your buildozer.spec and main.py are in the root or correctly referenced
           buildozer_version: stable
+
+      # Debugging step: List files in the buildozer output directory
+      - name: List files in buildozer output directory
+        run: |
+          echo "Listing contents of .buildozer/bin/:"
+          ls -R .buildozer/bin/ || echo ".buildozer/bin/ not found or empty."
+        # This step will help confirm if an APK was generated and where it is.
+        # It will also show if the directory itself exists.
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: faceapp-apk
-          path: app/bin/*.apk
+          path: .buildozer/bin/*.apk # Changed path to the common buildozer output directory
+          # If your buildozer.spec explicitly sets a different output directory,
+          # you'll need to adjust this path accordingly.
