@@ -8,15 +8,12 @@ import time
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.image import MIMEImage # Import MIMEImage for attaching images
+from email.mime.image import MIMEImage
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
-
 import cv2
 import numpy as np
 import requests
-from flask import Flask, request, jsonify, send_from_directory
-from flask_cors import CORS
 import base64
 
 # --- Configuration Constants (from original Kivy app) ---
@@ -41,6 +38,12 @@ FORM_FIELDS: Dict[str, str] = {
 }
 
 # Environment variables for sensitive info
+# IMPORTANT: Replace these with your actual email and app password (for Gmail)
+# For security, it's best to set these as environment variables before running the script.
+# Example:
+# export FACEAPP_EMAIL="your_email@gmail.com"
+# export FACEAPP_PASS="your_app_password"
+# export FACEAPP_ADMIN_EMAIL="admin_email@example.com"
 EMAIL_ADDRESS: str = os.environ.get("FACEAPP_EMAIL", "faceapp0011@gmail.com")
 EMAIL_PASSWORD: str = os.environ.get("FACEAPP_PASS", "ytup bjrd pupf tuuj")
 SMTP_SERVER: str = "smtp.gmail.com"
@@ -49,12 +52,15 @@ ADMIN_EMAIL_ADDRESS: str = os.environ.get("FACEAPP_ADMIN_EMAIL", "projects@archt
 
 # Simple logger for backend console output
 def Logger(message: str) -> None:
+    """Prints a timestamped message to the console."""
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
 
 def ensure_dir(path: str | Path) -> None:
+    """Ensures that a directory exists, creating it if necessary."""
     Path(path).mkdir(parents=True, exist_ok=True)
 
 def python_time_now() -> str:
+    """Returns the current time formatted as a string."""
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def _crop_and_resize_for_passport(cv_image: np.ndarray, target_size: Tuple[int, int] = (240, 320)) -> np.ndarray:
@@ -81,11 +87,16 @@ def _crop_and_resize_for_passport(cv_image: np.ndarray, target_size: Tuple[int, 
     return resized_image
 
 class FaceAppBackend:
+    """
+    Core backend logic for the FaceApp, handling face recognition,
+    sample capture, OTP generation, email sending, and Google Form submission.
+    """
     def __init__(self):
         self.known_faces_dir: str = str(Path("./known_faces")) # Store faces in a local directory
         ensure_dir(self.known_faces_dir)
         Logger(f"[INFO] Known faces directory set to: {self.known_faces_dir}")
 
+        # Initialize Haar Cascade for face detection
         self.face_cascade = cv2.CascadeClassifier(HAAR_CASCADE_PATH)
         if self.face_cascade.empty():
             Logger(f"[WARN] Failed to load Haar cascade from '{HAAR_CASCADE_PATH}'. Attempting fallback to OpenCV data path.")
@@ -103,25 +114,27 @@ class FaceAppBackend:
         else:
             Logger(f"[INFO] Successfully loaded Haar cascade from: '{HAAR_CASCADE_PATH}'.")
 
-        self.recognizer = None
-        self.label_map = {}
-        self.last_seen_time: Dict[str, float] = {}
-        self.otp_storage: Dict[str, str] = {}
+        self.recognizer = None # Will be initialized/trained later
+        self.label_map = {} # Maps numerical labels to (name, emp_id) tuples
+        self.last_seen_time: Dict[str, float] = {} # Tracks last recognition time for each employee
+        self.otp_storage: Dict[str, str] = {} # Stores OTPs for verification
         self.pending_names: Dict[str, Optional[str]] = {} # Stores name for capture process
-        self.user_emails: Dict[str, str] = {}
+        self.user_emails: Dict[str, str] = {} # Stores employee emails
         self.daily_attendance_status: Dict[str, str] = {} # Stores emp_id -> date (YYYY-MM-DD) for in/out tracking
-        self.last_recognized_info: Dict[str, Any] = {} # Initialize as empty dict
+        self.last_recognized_info: Dict[str, Any] = {} # Stores info of the last recognized person
 
-        self.capture_mode: bool = False # Flag to indicate if samples are being captured
+        # Variables for managing the face sample capture process
+        self.capture_mode: bool = False
         self.capture_target_count: int = 0
         self.capture_collected_count: int = 0
         self.capture_name: Optional[str] = None
         self.capture_emp_id: Optional[str] = None
-        self.capture_start_index: int = 0
+        self.capture_start_index: int = 0 # To continue numbering for updates
         self.capture_lock = threading.Lock() # To prevent race conditions during capture
 
-        self._train_recognizer_and_load_emails() # Initial training and email loading
-        self.daily_attendance_status = self._load_daily_attendance_status() # Load attendance status
+        # Initial setup: train recognizer and load existing data
+        self._train_recognizer_and_load_emails()
+        self.daily_attendance_status = self._load_daily_attendance_status()
 
     def _train_recognizer_and_load_emails(self):
         """Initializes recognizer and loads user emails."""
@@ -639,103 +652,121 @@ class FaceAppBackend:
             return {"status": "success", "info": info}
         return {"status": "no_new_info"}
 
-# --- Flask App Setup ---
-app = Flask(__name__)
-CORS(app) # Enable CORS for frontend communication
+# --- Example Usage (How to run and interact with the backend) ---
+if __name__ == "__main__":
+    # Ensure you have the 'haarcascade_frontalface_default.xml' file
+    # in the same directory as this script, or in your OpenCV data path.
+    # You can download it from:
+    # https://github.com/opencv/opencv/blob/master/data/haarcascades/haarcascade_frontalface_default.xml
 
-# Initialize the backend logic
-face_app_backend = FaceAppBackend()
+    # Also, set your environment variables for email:
+    # FACEAPP_EMAIL, FACEAPP_PASS (app password for Gmail), FACEAPP_ADMIN_EMAIL
 
-@app.route('/')
-def index():
-    return "FaceApp Backend is running."
+    print("Initializing FaceApp Backend...")
+    try:
+        face_app_backend = FaceAppBackend()
+        print("FaceApp Backend initialized successfully.")
+    except RuntimeError as e:
+        print(f"Error initializing backend: {e}")
+        print("Please ensure 'haarcascade_frontalface_default.xml' is correctly placed and accessible.")
+        exit()
 
-@app.route('/process_frame', methods=['POST'])
-def process_frame_endpoint():
-    data = request.json
-    if not data or 'image' not in data:
-        return jsonify({"status": "error", "message": "No image data provided"}), 400
+    print("\n--- FaceApp Backend Demonstration ---")
+    print("This script demonstrates how to use the FaceAppBackend class.")
+    print("It does NOT include a live camera feed or a web interface.")
+    print("You will need to manually call methods or provide mock data.")
 
-    frame_data_b64 = data['image'].split(',')[1] # Remove "data:image/jpeg;base64," prefix
-    result = face_app_backend.process_frame(frame_data_b64)
-    return jsonify(result)
+    while True:
+        print("\nChoose an action:")
+        print("1. Register a new user (start face capture)")
+        print("2. Update existing user's face samples")
+        print("3. Get user email (if registered)")
+        print("4. Send OTP for a user")
+        print("5. Verify OTP for a user")
+        print("6. Simulate frame processing (requires a base64 image string)")
+        print("7. Get last recognized info")
+        print("8. Exit")
 
-@app.route('/register_user', methods=['POST'])
-def register_user_endpoint():
-    data = request.json
-    name = data.get('name')
-    emp_id = data.get('emp_id')
-    email = data.get('email')
+        choice = input("Enter your choice (1-8): ")
 
-    if not all([name, emp_id, email]):
-        return jsonify({"status": "error", "message": "Missing name, employee ID, or email"}), 400
-    if "@" not in email:
-        return jsonify({"status": "error", "message": "Invalid email format"}), 400
+        if choice == '1':
+            name = input("Enter new user's name: ")
+            emp_id = input("Enter new user's employee ID: ")
+            email = input("Enter new user's email: ")
+            
+            # Register email first
+            reg_email_result = face_app_backend.register_user_email(emp_id, email)
+            print(f"Register Email Result: {reg_email_result}")
 
-    face_app_backend.register_user_email(emp_id, email) # Save email immediately
-    # Start capture for registration (SAMPLES_PER_USER)
-    result = face_app_backend.start_capture_samples(name, emp_id, updating=False, sample_count=SAMPLES_PER_USER)
-    return jsonify(result)
+            # Start capture for new user
+            capture_result = face_app_backend.start_capture_samples(name, emp_id, updating=False, sample_count=SAMPLES_PER_USER)
+            print(f"Start Capture Result: {capture_result}")
+            if capture_result["status"] == "success":
+                print(f"Please present faces to the camera (if integrated). {SAMPLES_PER_USER} samples needed.")
+                print("Note: In this standalone script, you'd manually trigger process_frame repeatedly.")
+                # In a real application, a camera feed would continuously call process_frame
+                # For demonstration, we'll just acknowledge capture mode started.
 
-@app.route('/get_user_email', methods=['POST'])
-def get_user_email_endpoint():
-    data = request.json
-    emp_id = data.get('emp_id')
-    if not emp_id:
-        return jsonify({"status": "error", "message": "Missing employee ID"}), 400
-    result = face_app_backend.get_user_email(emp_id)
-    return jsonify(result)
+        elif choice == '2':
+            emp_id = input("Enter employee ID to update: ")
+            name = input("Enter name (optional, will try to fetch if empty): ")
+            update_result = face_app_backend.start_capture_samples(name, emp_id, updating=True, sample_count=5)
+            print(f"Start Update Capture Result: {update_result}")
+            if update_result["status"] == "success":
+                print("Update capture mode initiated. Provide new face samples.")
 
-@app.route('/send_otp', methods=['POST'])
-def send_otp_endpoint():
-    data = request.json
-    emp_id = data.get('emp_id')
-    email = data.get('email')
-    name = data.get('name') # Optional, for admin email context
+        elif choice == '3':
+            emp_id = input("Enter employee ID to get email: ")
+            email_result = face_app_backend.get_user_email(emp_id)
+            print(f"Get User Email Result: {email_result}")
 
-    if not all([emp_id, email]):
-        return jsonify({"status": "error", "message": "Missing employee ID or email"}), 400
+        elif choice == '4':
+            emp_id = input("Enter employee ID to send OTP: ")
+            email = input("Enter email to send OTP to: ")
+            name = input("Enter name (optional, for email context): ")
+            otp_send_result = face_app_backend.send_otp_flow(emp_id, email, name)
+            print(f"Send OTP Result: {otp_send_result}")
 
-    result = face_app_backend.send_otp_flow(emp_id, email, name)
-    return jsonify(result)
+        elif choice == '5':
+            emp_id = input("Enter employee ID for OTP verification: ")
+            otp_entered = input("Enter OTP received: ")
+            otp_verify_result = face_app_backend.verify_otp(emp_id, otp_entered)
+            print(f"Verify OTP Result: {otp_verify_result}")
 
-@app.route('/verify_otp', methods=['POST'])
-def verify_otp_endpoint():
-    data = request.json
-    emp_id = data.get('emp_id')
-    otp = data.get('otp')
+        elif choice == '6':
+            print("To simulate frame processing, you need a base64 encoded image string.")
+            print("You can get this from a webcam stream in a frontend application.")
+            print("For a quick test, you can use a small base64 string of a black image:")
+            print("Example: iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
+            frame_b64 = input("Enter base64 image string (or 'skip'): ")
+            if frame_b64.lower() != 'skip':
+                # Prepend the data URI prefix if it's missing (as expected by process_frame)
+                if not frame_b64.startswith("data:image/"):
+                    frame_b64 = "data:image/jpeg;base64," + frame_b64
+                
+                process_result = face_app_backend.process_frame(frame_b64)
+                print(f"Process Frame Result: {process_result}")
+                if process_result.get("faces"):
+                    for face in process_result["faces"]:
+                        print(f"  Detected Face: Name={face['name']}, EmpID={face['emp_id']}, Confidence={face['confidence']:.2f}, Status={face['status']}")
+            else:
+                print("Skipping frame processing.")
 
-    if not all([emp_id, otp]):
-        return jsonify({"status": "error", "message": "Missing employee ID or OTP"}), 400
+        elif choice == '7':
+            last_info = face_app_backend.get_last_recognized_info()
+            if last_info.get("status") == "success":
+                info = last_info["info"]
+                print(f"Last Recognized: Name={info['name']}, EmpID={info['emp_id']}, Time={info['time']}")
+                # You can decode and display the image if you have a way to do so (e.g., saving to file)
+                # with open("last_recognized_face.jpg", "wb") as f:
+                #     f.write(base64.b64decode(info['image']))
+                # print("Image saved as last_recognized_face.jpg")
+            else:
+                print("No new recognized info available.")
 
-    result = face_app_backend.verify_otp(emp_id, otp)
-    return jsonify(result)
-
-@app.route('/start_update_capture', methods=['POST'])
-def start_update_capture_endpoint():
-    data = request.json
-    name = data.get('name')
-    emp_id = data.get('emp_id')
-    # Use a smaller sample count for updates, e.g., 5
-    result = face_app_backend.start_capture_samples(name, emp_id, updating=True, sample_count=5)
-    return jsonify(result)
-
-@app.route('/get_last_recognized', methods=['GET'])
-def get_last_recognized_endpoint():
-    """Endpoint for frontend to poll for last recognized person's details."""
-    result = face_app_backend.get_last_recognized_info()
-    return jsonify(result)
-
-if __name__ == '__main__':
-    # To run this:
-    # 1. pip install Flask opencv-python numpy requests
-    # 2. Download haarcascade_frontalface_default.xml and place it in the same directory as app.py
-    #    (You can find it in OpenCV's data directory, e.g., site-packages/cv2/data/)
-    # 3. Set environment variables: FACEAPP_EMAIL, FACEAPP_PASS, FACEAPP_ADMIN_EMAIL
-    #    Example (Linux/macOS):
-    #    export FACEAPP_EMAIL="your_email@gmail.com"
-    #    export FACEAPP_PASS="your_app_password" # Use app password for Gmail, not your main password
-    #    export FACEAPP_ADMIN_EMAIL="admin_email@example.com"
-    # 4. python app.py
-    app.run(host='0.0.0.0', port=5000, debug=True)
+        elif choice == '8':
+            print("Exiting FaceApp Backend demonstration.")
+            break
+        else:
+            print("Invalid choice. Please try again.")
 
